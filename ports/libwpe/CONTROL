@@ -1,0 +1,4 @@
+Source: libwpe
+Version: 1.1.0-1
+Build-Depends: angle
+Description: libwpe is a dependency when building WPE (Web Platform for Embedded) webkit.  http://webplatformforembedded.org/
