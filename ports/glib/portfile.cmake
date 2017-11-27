@@ -41,7 +41,7 @@ vcpkg_configure_cmake(
         -DGLIB_VERSION=${GLIB_VERSION}
     OPTIONS_DEBUG
         -DGLIB_SKIP_HEADERS=ON
-        -DGLIB_SKIP_TOOLS=ON
+        -DGLIB_SKIP_TOOLS=OFF
 )
 
 vcpkg_install_cmake()
