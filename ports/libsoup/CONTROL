@@ -1,0 +1,4 @@
+Source: libsoup
+Version: 2.60.2
+Build-Depends: glib, gettext, libxml2, sqlite3
+Description: libsoup is an HTTP client/server library for GNOME. It uses GObjects and the glib main loop, to integrate well with GNOME applications, and also has a synchronous API, for use in threaded applications.
