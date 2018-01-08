@@ -7,8 +7,8 @@ include(vcpkg_common_functions)
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO masali-hp/WPEBackend
-    REF de7026a701c353ef57338f6cd562a5dd8ea27e80
-    SHA512 f1562db0982e87f0645d2d7a1e8b2037a8b844a96c169a2a0a65c079d42232cd147974b5540fda1d3f4c3a0ce885828530e52b4632df314966f3e17e2b1d9203
+    REF d26fe176d0361c77dffee24d306a5c3cccf9baff
+    SHA512 2b3242615ca29519458eed350c431b46fae155d87d4549e69604444b004d23e350e4a29c46517fd8925e6f21b6f70ea3d25c3ea299b4a9b352792dcaf39431a4
     HEAD_REF master)
 
 vcpkg_configure_cmake(

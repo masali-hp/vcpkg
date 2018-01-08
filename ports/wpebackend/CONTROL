@@ -1,4 +1,4 @@
 Source: wpebackend
-Version: 0.1
+Version: 0.1.1
 Build-Depends: angle
 Description: wpebackend is a dependency when building WPE (Web Platform for Embedded) webkit.  http://webplatformforembedded.org/
