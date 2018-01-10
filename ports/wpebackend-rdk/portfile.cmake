@@ -15,6 +15,7 @@ vcpkg_configure_cmake(
     SOURCE_PATH ${SOURCE_PATH}
     OPTIONS
         ${UWP_OPTIONS}
+        -DUSE_BACKEND_WINDOWS_EGL=ON
     OPTIONS_DEBUG
         -DENABLE_DEBUG=ON
 )
