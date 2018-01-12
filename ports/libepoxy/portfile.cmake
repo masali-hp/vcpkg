@@ -7,8 +7,8 @@ include(vcpkg_common_functions)
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO masali-hp/libepoxy
-    REF pre-1.5.0-cmake
-    SHA512 8068eb4e7b42e1646f67f626ef27fa89c9931b18c441b184fa8b99399b85d32f60dddd1f5100dd585f68cc5a7d7c7df0e979ffa45ec09b607c1b36998ac4b7e9
+    REF 56eba0d55334dc36aca20e69c68c54380e6e905e
+    SHA512 04f923c361caf6437fac3c657cd4a96ec3287b334b1a360afa144b2d7636a35918ea487de99e20f96c4390f320e41fd3dd1e481053f805551eeede0a252c4f8c
     HEAD_REF master)
 
 if (VCPKG_LIBRARY_LINKAGE STREQUAL dynamic)
