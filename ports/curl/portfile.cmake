@@ -11,6 +11,7 @@ vcpkg_from_github(
         ${CMAKE_CURRENT_LIST_DIR}/0002_fix_uwp.patch
         ${CMAKE_CURRENT_LIST_DIR}/0003_fix_libraries.patch
         ${CMAKE_CURRENT_LIST_DIR}/0004_nghttp2_staticlib.patch
+        ${CMAKE_CURRENT_LIST_DIR}/0005_exe_install_dir.patch
 )
 
 string(COMPARE EQUAL "${VCPKG_LIBRARY_LINKAGE}" "static" CURL_STATICLIB)
@@ -131,6 +132,8 @@ else()
 endif()
 file(WRITE ${CURRENT_PACKAGES_DIR}/include/curl/curl.h "${CURL_H}")
 
+file(REMOVE_RECURSE ${CURRENT_PACKAGES_DIR}/cmake)
+file(REMOVE_RECURSE ${CURRENT_PACKAGES_DIR}/debug/cmake)
 vcpkg_copy_pdbs()
 
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/usage DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT})
