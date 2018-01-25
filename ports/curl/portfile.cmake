@@ -2,16 +2,19 @@ include(vcpkg_common_functions)
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO curl/curl
-    REF curl-7_55_1
-    SHA512 b5c6dd6cca8d07c08d1760feff9822f1264359adde068afd1584fc3fdcfa50c68e0e1b5ecaa277298ad0923b61019943c181ee1f0870c312399038c4c4e0e327
+    REF curl-7_58_0
+    SHA512 148c25152732dd5ad2626bc70c7725577e25033a73eecefa4dd820927ec552f9c2d0235cc3f597404d3893eced7d5d2bd9522f6302b7f930e9f65912ac2c91f6
     HEAD_REF master
 )
 
+# FYI: updating to curl-7_58_0 0002_fix_uwp.patch stops applying.
+# We're not building universal windows platform, so I don't care, right now.
 vcpkg_apply_patches(
     SOURCE_PATH ${SOURCE_PATH}
     PATCHES
         ${CMAKE_CURRENT_LIST_DIR}/0001_cmake.patch
         ${CMAKE_CURRENT_LIST_DIR}/0002_fix_uwp.patch
+        ${CMAKE_CURRENT_LIST_DIR}/0003_exe_install_dir.patch
 )
 
 if (VCPKG_LIBRARY_LINKAGE STREQUAL dynamic)
@@ -40,7 +43,7 @@ vcpkg_configure_cmake(
     OPTIONS
         ${UWP_OPTIONS}
         -DBUILD_TESTING=OFF
-        -DBUILD_CURL_EXE=OFF
+        -DBUILD_CURL_EXE=ON
         -DENABLE_MANUAL=OFF
         -DCURL_STATICLIB=${CURL_STATICLIB}
         -DCMAKE_USE_OPENSSL=ON
@@ -71,5 +74,8 @@ else()
     string(REPLACE "#ifdef CURL_STATICLIB" "#if 0" CURL_H "${CURL_H}")
 endif()
 file(WRITE ${CURRENT_PACKAGES_DIR}/include/curl/curl.h "${CURL_H}")
+
+file(REMOVE_RECURSE ${CURRENT_PACKAGES_DIR}/cmake)
+file(REMOVE_RECURSE ${CURRENT_PACKAGES_DIR}/debug/cmake)
 
 vcpkg_copy_pdbs()

@@ -1,0 +1,13 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 30c525c..4d31058 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -76,7 +76,7 @@ set_target_properties(${EXE_NAME} PROPERTIES
+ 
+ #INCLUDE(ModuleInstall OPTIONAL)
+ 
+-install(TARGETS ${EXE_NAME} EXPORT curl-target DESTINATION bin)
++install(TARGETS ${EXE_NAME} EXPORT curl-target DESTINATION tools)
+ export(TARGETS ${EXE_NAME}
+        APPEND FILE ${PROJECT_BINARY_DIR}/curl-target.cmake
+        NAMESPACE CURL::
