@@ -20,12 +20,6 @@ else()
     SET(BUILTIN_UCDN "OFF")
 endif()
 
-# FIXME: I'm hardcoding 'lib64' below.  What if we wanted to do a 32 bit build?
-# Does VCPKG_TARGET_ARCHITECTURE tell me if I'm 32 bit or 64 bit?
-# Also, how to support debug and release?
-# Another options would be to simulate a vcpkg install of ICU by copying headers and libs to install paths.
-# Or perhaps ICU in vcpkg will work sometime...  Then we can use standard ICU package recipe.
-
 vcpkg_configure_cmake(
     SOURCE_PATH ${SOURCE_PATH}
     PREFER_NINJA
@@ -34,8 +28,6 @@ vcpkg_configure_cmake(
         -DHB_HAVE_GLIB=${HAVE_GLIB}
         -DHB_BUILTIN_UCDN=${BUILTIN_UCDN}
         -DHB_HAVE_ICU=ON
-        -DICU_INCLUDE_DIR=${CURRENT_PACKAGES_DIR}/../../../icu/include
-        -DICU_LIBRARY=${CURRENT_PACKAGES_DIR}/../../../icu/lib64/icuucd.lib
     OPTIONS_DEBUG
         -DSKIP_INSTALL_HEADERS=ON
 )
