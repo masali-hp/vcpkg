@@ -20,6 +20,17 @@ else()
     SET(BUILTIN_UCDN "OFF")
 endif()
 
+# NOTE: once ICU vcpkg build works, we shouldn't need to manually specify paths for ICU.
+# Harfbuzz debug build finds release icuuc lib.  Manually specifying ICU_LIBRARY fixes that.
+
+if(VCPKG_TARGET_ARCHITECTURE STREQUAL "x86")
+    SET(ICU_LIB_DEBUG ${CURRENT_PACKAGES_DIR}/../../../icu/lib/icuucd.lib)
+    SET(ICU_LIB_RELEASE ${CURRENT_PACKAGES_DIR}/../../../icu/lib/icuuc.lib)
+else ()
+    SET(ICU_LIB_DEBUG ${CURRENT_PACKAGES_DIR}/../../../icu/lib64/icuucd.lib)
+    SET(ICU_LIB_RELEASE ${CURRENT_PACKAGES_DIR}/../../../icu/lib64/icuuc.lib)
+endif ()
+
 vcpkg_configure_cmake(
     SOURCE_PATH ${SOURCE_PATH}
     PREFER_NINJA
@@ -28,7 +39,11 @@ vcpkg_configure_cmake(
         -DHB_HAVE_GLIB=${HAVE_GLIB}
         -DHB_BUILTIN_UCDN=${BUILTIN_UCDN}
         -DHB_HAVE_ICU=ON
+        -DICU_INCLUDE_DIR=${CURRENT_PACKAGES_DIR}/../../../icu/include
+    OPTIONS_RELEASE
+        -DICU_LIBRARY=${ICU_LIB_RELEASE}
     OPTIONS_DEBUG
+        -DICU_LIBRARY=${ICU_LIB_DEBUG}
         -DSKIP_INSTALL_HEADERS=ON
 )
 
