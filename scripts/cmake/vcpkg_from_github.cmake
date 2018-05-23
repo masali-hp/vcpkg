@@ -56,7 +56,7 @@
 ## * [ms-gsl](https://github.com/Microsoft/vcpkg/blob/master/ports/ms-gsl/portfile.cmake)
 ## * [beast](https://github.com/Microsoft/vcpkg/blob/master/ports/beast/portfile.cmake)
 function(vcpkg_from_github)
-    set(oneValueArgs OUT_SOURCE_PATH REPO REF SHA512 HEAD_REF)
+    set(oneValueArgs OUT_SOURCE_PATH REPO REF SHA512 HEAD_REF SERVER)
     set(multipleValuesArgs PATCHES)
     cmake_parse_arguments(_vdud "" "${oneValueArgs}" "${multipleValuesArgs}" ${ARGN})
 
@@ -97,6 +97,11 @@ function(vcpkg_from_github)
         set(VCPKG_USE_HEAD_VERSION OFF)
     endif()
 
+    set(SERVER "github.com")
+    if (_vdud_SERVER)
+        set(SERVER "${_vdud_SERVER}")
+    endif()
+
     # Handle --no-head scenarios
     if(NOT VCPKG_USE_HEAD_VERSION)
         if(NOT _vdud_REF)
@@ -106,7 +111,7 @@ function(vcpkg_from_github)
         string(REPLACE "/" "-" SANITIZED_REF "${_vdud_REF}")
 
         vcpkg_download_distfile(ARCHIVE
-            URLS "https://github.com/${ORG_NAME}/${REPO_NAME}/archive/${_vdud_REF}.tar.gz"
+            URLS "https://${SERVER}/${ORG_NAME}/${REPO_NAME}/archive/${_vdud_REF}.tar.gz"
             SHA512 "${_vdud_SHA512}"
             FILENAME "${ORG_NAME}-${REPO_NAME}-${SANITIZED_REF}.tar.gz"
         )
@@ -123,7 +128,7 @@ function(vcpkg_from_github)
     endif()
 
     # The following is for --head scenarios
-    set(URL "https://github.com/${ORG_NAME}/${REPO_NAME}/archive/${_vdud_HEAD_REF}.tar.gz")
+    set(URL "https://${SERVER}/${ORG_NAME}/${REPO_NAME}/archive/${_vdud_HEAD_REF}.tar.gz")
     string(REPLACE "/" "-" SANITIZED_HEAD_REF "${_vdud_HEAD_REF}")
     set(downloaded_file_name "${ORG_NAME}-${REPO_NAME}-${SANITIZED_HEAD_REF}.tar.gz")
     set(downloaded_file_path "${DOWNLOADS}/${downloaded_file_name}")
@@ -147,7 +152,7 @@ function(vcpkg_from_github)
 
         # Try to download the file and version information from github.
         vcpkg_download_distfile(ARCHIVE_VERSION
-            URLS "https://api.github.com/repos/${ORG_NAME}/${REPO_NAME}/git/refs/heads/${_vdud_HEAD_REF}"
+            URLS "https://api.${SERVER}/repos/${ORG_NAME}/${REPO_NAME}/git/refs/heads/${_vdud_HEAD_REF}"
             FILENAME ${downloaded_file_name}.version
             SKIP_SHA512
         )
