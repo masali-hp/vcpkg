@@ -20,6 +20,7 @@ vcpkg_configure_cmake(
     OPTIONS
         -DCMAKE_DEBUG_POSTFIX=d
         -DWEBP_BUILD_MUX=ON
+        -DBUILD_SHARED_LIBS=ON
 )
 
 vcpkg_install_cmake()
