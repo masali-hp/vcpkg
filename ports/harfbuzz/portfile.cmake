@@ -42,6 +42,10 @@ if(NOT (BUILTIN_UCDN OR HAVE_GLIB))
     message(FATAL_ERROR "Error: At least one Unicode callback must be specified (ucdn, glib).")
 endif()
 
+# Harfbuzz debug build finds release icuuc lib.  Manually specifying ICU_LIBRARY fixes that.
+SET(ICU_LIB_DEBUG ${CURRENT_INSTALLED_DIR}/debug/lib/icuucd.lib)
+SET(ICU_LIB_RELEASE ${CURRENT_INSTALLED_DIR}/lib/icuuc.lib)
+
 vcpkg_configure_cmake(
     SOURCE_PATH ${SOURCE_PATH}
     PREFER_NINJA
@@ -51,7 +55,10 @@ vcpkg_configure_cmake(
         -DHB_HAVE_ICU=${HB_HAVE_ICU}
         -DHB_HAVE_GLIB=${HAVE_GLIB}
         -DHB_HAVE_GRAPHITE2=${HB_HAVE_GRAPHITE2}
+    OPTIONS_RELEASE
+        -DICU_LIBRARY=${ICU_LIB_RELEASE}
     OPTIONS_DEBUG
+        -DICU_LIBRARY=${ICU_LIB_DEBUG}
         -DSKIP_INSTALL_HEADERS=ON
 )
 
