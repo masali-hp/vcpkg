@@ -29,6 +29,10 @@ function(vcpkg_git ARGUMENTS WORKING_DIRECTORY)
     
     if (NOT GIT_EXECUTABLE)
         find_program(GIT_EXECUTABLE
+            NAMES git.exe)
+    endif()
+    if (NOT GIT_EXECUTABLE)
+        find_program(GIT_EXECUTABLE
             NAMES git.exe
             HINTS "C:/Program Files" "C:/Program Files (x86)"
             PATH_SUFFIXES Git/cmd

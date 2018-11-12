@@ -79,15 +79,15 @@ function(vcpkg_from_git)
     endif()
             
     if(NOT _VCPKG_NO_DOWNLOADS)
+        message(STATUS "Checking for existing repo at ${SOURCE_PATH}")
         if(NOT EXISTS ${SOURCE_PATH})
             vcpkg_git("clone ${_vdud_REPO} ${PORT}" "${CURRENT_BUILDTREES_DIR}/src")
         else()
             vcpkg_git("fetch origin" "${SOURCE_PATH}")
+            # blow away any current patches
+            vcpkg_git("checkout -- ." "${SOURCE_PATH}")
         endif()
     endif()
-    
-    # blow away any current patches
-    vcpkg_git("checkout -- ." "${SOURCE_PATH}")
     
     vcpkg_git("checkout ${_vdud_REF}" "${SOURCE_PATH}")
     
