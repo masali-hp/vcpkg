@@ -1,0 +1,853 @@
+From 3c6ed52e09610bfe98cfaa1e3be1f1552a4ef034 Mon Sep 17 00:00:00 2001
+From: Mark Salisbury <mark.salisbury@hp.com>
+Date: Fri, 1 Mar 2019 12:35:45 -0700
+Subject: [PATCH] Add g_object_watch_refunref
+
+g_object_watch_refunref makes it possible to watch refs/unrefs to a
+particular object.  it will output a callstack on every ref/unref to
+that object.
+---
+ gobject/Callstack.c                | 684 +++++++++++++++++++++++++++++
+ gobject/Callstack.h                |  21 +
+ gobject/gobject.c                  |  35 ++
+ gobject/gobject.h                  |   5 +
+ win32/vs14/gobject.vcxproj         |   1 +
+ win32/vs14/gobject.vcxproj.filters |   1 +
+ 6 files changed, 747 insertions(+)
+ create mode 100644 gobject/Callstack.c
+ create mode 100644 gobject/Callstack.h
+
+diff --git a/gobject/Callstack.c b/gobject/Callstack.c
+new file mode 100644
+index 0000000..af33230
+--- /dev/null
++++ b/gobject/Callstack.c
+@@ -0,0 +1,684 @@
++/*
++ * (C) Copyright 2010 Hewlett-Packard Development Company, L.P.
++ * This program is free software; you can redistribute it and/or modify it under the
++ * terms of version 2.1 of the GNU Lesser General Public License as published by the
++ * Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program;
++ * if not, write to:
++ * Free Software Foundation, Inc.
++ * 51 Franklin Street, Fifth Floor
++ * Boston, MA 02110-1301, USA.
++ *
++ * The Windows XP implementation was derived heavily from the stackwalker project at
++ * codeproject.com.  (http://www.codeproject.com/KB/threads/StackWalker.aspx)
++ */
++
++#ifdef WIN32
++#include <windows.h>
++#ifndef WINCE
++#include <dbghelp.h>
++ //#include <Ntifs.h>
++#endif
++#elif LINUX
++#include <string.h>
++#endif
++#include "Callstack.h"
++#include <stdio.h>
++
++
++#if defined(_WIN32)
++typedef struct _CallSnapshot {
++    DWORD dwReturnAddr;
++} CallSnapshot;
++
++#if defined(WINCE)
++__declspec(dllimport) ULONG __stdcall GetThreadCallStack(HANDLE hThrd, ULONG dwMaxFrames, void* lpFrames, DWORD dwFlags, DWORD dwSkip);
++#endif
++#endif
++
++#ifdef WINCE
++static unsigned int calculateHash(void * frames[], unsigned int count);
++#define IS_VALID_NATIVE_RETURN_ADDR(ra) (((unsigned)(ra) & 0xf0000000) == 0x40000000)
++#else
++#define IS_VALID_NATIVE_RETURN_ADDR(ra)  1
++#endif
++//#define IS_VALID_METHOD_DESCRIPTOR(md)  (((DWORD)(md) != 0xbaadf00d))
++
++#if defined (_WIN32)
++#if !defined(WINCE)
++#ifndef _UNICODE
++#define _UNICODE 1
++#endif
++#include <tchar.h>
++
++HMODULE m_hDbhHelp = NULL;
++HANDLE hProcess = NULL;
++
++// StackWalk64()
++typedef BOOL(__stdcall * tStackWalk64)(
++    DWORD MachineType,
++    HANDLE hProcess,
++    HANDLE hThread,
++    LPSTACKFRAME64 StackFrame,
++    PVOID ContextRecord,
++    PREAD_PROCESS_MEMORY_ROUTINE64 ReadMemoryRoutine,
++    PFUNCTION_TABLE_ACCESS_ROUTINE64 FunctionTableAccessRoutine,
++    PGET_MODULE_BASE_ROUTINE64 GetModuleBaseRoutine,
++    PTRANSLATE_ADDRESS_ROUTINE64 TranslateAddress);
++
++// SymFunctionTableAccess64()
++typedef PVOID(__stdcall * tSymFunctionTableAccess64)(HANDLE hProcess, DWORD64 AddrBase);
++
++// SymGetModuleBase64()
++typedef DWORD64(__stdcall * tSymGetModuleBase64)(IN HANDLE hProcess, IN DWORD64 dwAddr);
++
++// SymGetSymFromAddr64
++typedef BOOL(__stdcall *tSymGetSymFromAddr64)(IN HANDLE hProcess, IN DWORD64 dwAddr,
++    OUT PDWORD64 pdwDisplacement, OUT PIMAGEHLP_SYMBOL64 Symbol);
++
++// UnDecorateSymbolName()
++typedef DWORD(__stdcall WINAPI *tUnDecorateSymbolName)(PCSTR DecoratedName, PSTR UnDecoratedName,
++    DWORD UndecoratedLength, DWORD Flags);
++
++// SymGetLineFromAddr64()
++typedef BOOL(__stdcall *tSymGetLineFromAddr64)(IN HANDLE hProcess, IN DWORD64 dwAddr,
++    OUT PDWORD pdwDisplacement, OUT PIMAGEHLP_LINE64 Line);
++
++// SymGetModuleInfo64()
++typedef BOOL(__stdcall *tSymGetModuleInfo64)(IN HANDLE hProcess, IN DWORD64 dwAddr, OUT IMAGEHLP_MODULE64 *ModuleInfo);
++
++// SymInitialize()
++typedef BOOL(__stdcall *tSymInitialize)(IN HANDLE hProcess, IN PSTR UserSearchPath, IN BOOL fInvadeProcess);
++
++// SymCleanup()
++typedef BOOL(__stdcall *tSymCleanup)(IN HANDLE hProcess);
++
++// SymGetOptions()
++typedef DWORD(__stdcall *tSymGetOptions)(VOID);
++
++// SymSetOptions()
++typedef DWORD(__stdcall *tSymSetOptions)(IN DWORD SymOptions);
++
++// SymLoadModule64()
++typedef DWORD64(__stdcall *tSymLoadModule64)(IN HANDLE hProcess, IN HANDLE hFile,
++    IN PSTR ImageName, IN PSTR ModuleName, IN DWORD64 BaseOfDll, IN DWORD SizeOfDll);
++
++tStackWalk64 pStackWalk64 = NULL;
++tSymFunctionTableAccess64 pSymFunctionTableAccess64 = NULL;
++tSymGetModuleBase64 pSymGetModuleBase64 = NULL;
++tSymGetSymFromAddr64 pSymGetSymFromAddr64 = NULL;
++tUnDecorateSymbolName pUnDecorateSymbolName = NULL;
++tSymGetLineFromAddr64 pSymGetLineFromAddr64 = NULL;
++tSymGetModuleInfo64 pSymGetModuleInfo64 = NULL;
++tSymInitialize pSymInitialize = NULL;
++tSymCleanup pSymCleanup = NULL;
++tSymGetOptions pSymGetOptions = NULL;
++tSymSetOptions pSymSetOptions = NULL;
++tSymLoadModule64 pSymLoadModule64 = NULL;
++
++static void BuildSymPath(char * szSymPath, const size_t nSymPathLen)
++{
++#define nTempLen 1024
++    char szTemp[nTempLen];
++    char * szSymPathStart = szSymPath;
++
++    szSymPath[0] = 0;
++
++    strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), ".;");
++
++    // Now add the current directory:
++    if (GetCurrentDirectoryA(nTempLen, szTemp) > 0)
++    {
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), szTemp);
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), ";");
++    }
++
++    // Now add the path for the main-module:
++    if (GetModuleFileNameA(NULL, szTemp, nTempLen) > 0)
++    {
++        for (char *p = (szTemp + strlen(szTemp) - 1); p >= szTemp; --p)
++        {
++            // locate the rightmost path separator
++            if ((*p == '\\') || (*p == '/') || (*p == ':'))
++            {
++                *p = 0;
++                break;
++            }
++        }  // for (search for path separator...)
++        if (strlen(szTemp) > 0)
++        {
++            strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), szTemp);
++            strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), ";");
++        }
++    }
++    if (GetEnvironmentVariableA("_NT_SYMBOL_PATH", szTemp, nTempLen) > 0)
++    {
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), szTemp);
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), ";");
++    }
++    if (GetEnvironmentVariableA("_NT_ALTERNATE_SYMBOL_PATH", szTemp, nTempLen) > 0)
++    {
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), szTemp);
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), ";");
++    }
++    if (GetEnvironmentVariableA("SYSTEMROOT", szTemp, nTempLen) > 0)
++    {
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), szTemp);
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), ";");
++        // also add the "system32"-directory:
++        strcat_s(szTemp, nTempLen, "\\system32");
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), szTemp);
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), ";");
++    }
++
++    if (GetEnvironmentVariableA("SYSTEMDRIVE", szTemp, nTempLen) > 0)
++    {
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), "SRV*");
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), szTemp);
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), "\\websymbols");
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), "*http://msdl.microsoft.com/download/symbols;");
++    }
++    else
++        strcat_s(szSymPath, nSymPathLen - strlen(szSymPath), "SRV*c:\\websymbols*http://msdl.microsoft.com/download/symbols;");
++}
++
++// **************************************** ToolHelp32 ************************
++#define MAX_MODULE_NAME32 255
++#define TH32CS_SNAPMODULE   0x00000008
++#pragma pack( push, 8 )
++typedef struct tagMODULEENTRY32
++{
++    DWORD   dwSize;
++    DWORD   th32ModuleID;       // This module
++    DWORD   th32ProcessID;      // owning process
++    DWORD   GlblcntUsage;       // Global usage count on the module
++    DWORD   ProccntUsage;       // Module usage count in th32ProcessID's context
++    BYTE  * modBaseAddr;        // Base address of module in th32ProcessID's context
++    DWORD   modBaseSize;        // Size in bytes of module starting at modBaseAddr
++    HMODULE hModule;            // The hModule of this module in th32ProcessID's context
++    char    szModule[MAX_MODULE_NAME32 + 1];
++    char    szExePath[MAX_PATH];
++} MODULEENTRY32;
++typedef MODULEENTRY32 *  PMODULEENTRY32;
++typedef MODULEENTRY32 *  LPMODULEENTRY32;
++#pragma pack( pop )
++
++// CreateToolhelp32Snapshot()
++typedef HANDLE(__stdcall *tCreateToolhelp32Snapshot)(DWORD dwFlags, DWORD th32ProcessID);
++// Module32First()
++typedef BOOL(__stdcall *tModule32First)(HANDLE hSnapshot, LPMODULEENTRY32 lpme);
++// Module32Next()
++typedef BOOL(__stdcall *tModule32Next)(HANDLE hSnapshot, LPMODULEENTRY32 lpme);
++
++static BOOL LoadModules()
++{
++    DWORD pid = GetCurrentProcessId();
++
++    // try both dlls...
++    const wchar_t *dllname[] = { L"kernel32.dll", L"tlhelp32.dll" };
++    HINSTANCE hToolhelp = NULL;
++    tCreateToolhelp32Snapshot pCreateToolhelp32Snapshot = NULL;
++    tModule32First pModule32First = NULL;
++    tModule32Next pModule32Next = NULL;
++
++    HANDLE hSnap;
++    MODULEENTRY32 me;
++    me.dwSize = sizeof(me);
++    int i;
++
++    for (i = 0; i < (sizeof(dllname) / sizeof(dllname[0])); i++)
++    {
++        hToolhelp = LoadLibraryW(dllname[i]);
++        if (hToolhelp == NULL)
++            continue;
++        pCreateToolhelp32Snapshot = (tCreateToolhelp32Snapshot)GetProcAddress(hToolhelp, "CreateToolhelp32Snapshot");
++        pModule32First = (tModule32First)GetProcAddress(hToolhelp, "Module32First");
++        pModule32Next = (tModule32Next)GetProcAddress(hToolhelp, "Module32Next");
++        if ((pCreateToolhelp32Snapshot != NULL) && (pModule32First != NULL) && (pModule32Next != NULL))
++            break; // found the functions!
++        FreeLibrary(hToolhelp);
++        hToolhelp = NULL;
++    }
++
++    if (hToolhelp == NULL)
++        return FALSE;
++
++    hSnap = pCreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
++    if (hSnap == (HANDLE)-1)
++        return FALSE;
++
++    BOOL keepGoing = !!pModule32First(hSnap, &me);
++    int cnt = 0;
++    BOOL result = TRUE;
++    while (keepGoing)
++    {
++        if (pSymLoadModule64(hProcess, 0, me.szExePath, me.szModule, (DWORD64)me.modBaseAddr, me.modBaseSize) == 0)
++        {
++            result = FALSE;
++            break;
++        }
++
++        cnt++;
++        keepGoing = !!pModule32Next(hSnap, &me);
++    }
++    CloseHandle(hSnap);
++    FreeLibrary(hToolhelp);
++
++    return (result && cnt > 0);
++}
++
++static BOOL Init()
++{
++    static char initd = 0;
++#define szTempSize 4096
++    wchar_t szTemp[szTempSize];
++
++    if (initd)
++        return TRUE;
++
++    szTemp[0] = L'\0';
++
++    if ((m_hDbhHelp == NULL) && GetEnvironmentVariableW(L"ProgramFiles", szTemp, 4096) > 0) {
++        _tcscat_s(szTemp, szTempSize, L"\\Debugging Tools for Windows\\dbghelp.dll");
++        // now check if the file exists:
++        if (GetFileAttributesW(szTemp) != INVALID_FILE_ATTRIBUTES) {
++            m_hDbhHelp = LoadLibraryW(szTemp);
++        }
++    }
++
++    if ((m_hDbhHelp == NULL) && GetEnvironmentVariableW(L"ProgramFiles", szTemp, 4096) > 0) {
++        _tcscat_s(szTemp, szTempSize, L"\\Debugging Tools for Windows (x86)\\dbghelp.dll");
++        // now check if the file exists:
++        if (GetFileAttributesW(szTemp) != INVALID_FILE_ATTRIBUTES) {
++            m_hDbhHelp = LoadLibraryW(szTemp);
++        }
++    }
++
++    // Still not found? Then try to load the 64-Bit version:
++    if ((m_hDbhHelp == NULL) && (GetEnvironmentVariableW(L"ProgramFiles", szTemp, 4096) > 0)) {
++        _tcscat_s(szTemp, szTempSize, L"\\Debugging Tools for Windows 64-Bit\\dbghelp.dll");
++        if (GetFileAttributesW(szTemp) != INVALID_FILE_ATTRIBUTES) {
++            m_hDbhHelp = LoadLibraryW(szTemp);
++        }
++    }
++    if (m_hDbhHelp == NULL)  // if not already loaded, try to load a default-one
++        m_hDbhHelp = LoadLibraryW(L"dbghelp.dll");
++
++    if (m_hDbhHelp == NULL)
++        return FALSE;
++
++    pStackWalk64 = (tStackWalk64)GetProcAddress(m_hDbhHelp, "StackWalk64");
++    pSymFunctionTableAccess64 = (tSymFunctionTableAccess64)GetProcAddress(m_hDbhHelp, "SymFunctionTableAccess64");
++    pSymGetModuleBase64 = (tSymGetModuleBase64)GetProcAddress(m_hDbhHelp, "SymGetModuleBase64");
++    pSymGetSymFromAddr64 = (tSymGetSymFromAddr64)GetProcAddress(m_hDbhHelp, "SymGetSymFromAddr64");
++    pUnDecorateSymbolName = (tUnDecorateSymbolName)GetProcAddress(m_hDbhHelp, "UnDecorateSymbolName");
++    pSymGetLineFromAddr64 = (tSymGetLineFromAddr64)GetProcAddress(m_hDbhHelp, "SymGetLineFromAddr64");
++    pSymGetModuleInfo64 = (tSymGetModuleInfo64)GetProcAddress(m_hDbhHelp, "SymGetModuleInfo64");
++    pSymInitialize = (tSymInitialize)GetProcAddress(m_hDbhHelp, "SymInitialize");
++    pSymCleanup = (tSymCleanup)GetProcAddress(m_hDbhHelp, "SymCleanup");
++    pSymGetOptions = (tSymGetOptions)GetProcAddress(m_hDbhHelp, "SymGetOptions");
++    pSymSetOptions = (tSymSetOptions)GetProcAddress(m_hDbhHelp, "SymSetOptions");
++    pSymLoadModule64 = (tSymLoadModule64)GetProcAddress(m_hDbhHelp, "SymLoadModule64");
++
++    hProcess = GetCurrentProcess();
++
++#define nSymPathLen 4096
++    char szSymPath[nSymPathLen];
++    BuildSymPath(szSymPath, nSymPathLen);
++
++    if (pSymInitialize(hProcess, szSymPath, FALSE) == FALSE)
++        return FALSE;
++
++    DWORD symOptions = pSymGetOptions();  // SymGetOptions
++    symOptions |= SYMOPT_LOAD_LINES;
++    symOptions |= SYMOPT_FAIL_CRITICAL_ERRORS;
++    //symOptions |= SYMOPT_NO_PROMPTS;
++    symOptions &= ~SYMOPT_UNDNAME;
++    symOptions &= ~SYMOPT_DEFERRED_LOADS;
++    // SymSetOptions
++    symOptions = pSymSetOptions(symOptions);
++
++    LoadModules();
++
++    initd = 1;
++    return TRUE;
++}
++
++//static
++size_t GetCallstack(HANDLE hThread, CONTEXT * c, unsigned int framesToIgnore, unsigned int maxFramesToCapture, void * frames[], unsigned int * hash, char * incomplete, char omitFramesIfMaxExceeded)
++{
++    if (!Init())
++        return 0;
++
++    size_t count = 0;
++
++#ifdef _M_AMD64
++    COMPILE_WARNING("implement support for getting callstack on x64 architecture")
++#else
++    STACKFRAME64 s;
++    memset(&s, 0, sizeof(STACKFRAME64));
++    s.AddrPC.Offset = c->Eip;
++    s.AddrPC.Mode = AddrModeFlat;
++    s.AddrFrame.Offset = c->Ebp;
++    s.AddrFrame.Mode = AddrModeFlat;
++    s.AddrStack.Offset = c->Esp;
++    s.AddrStack.Mode = AddrModeFlat;
++
++    DWORD framesSkipped = 0;
++
++    if (hash)
++        *hash = 0;
++
++    if (framesToIgnore == 0) {
++        frames[0] = (void *)s.AddrPC.Offset;
++        count++;
++        if (hash)
++            *hash += (unsigned int)frames[0];
++    }
++    else {
++        framesSkipped++;
++    }
++
++    while (omitFramesIfMaxExceeded || (count < maxFramesToCapture)) {
++        if (!pStackWalk64(IMAGE_FILE_MACHINE_I386, hProcess, hThread, &s, &c, NULL, pSymFunctionTableAccess64, pSymGetModuleBase64, NULL)) {
++            //DWORD err = GetLastError();
++            *incomplete = 1;
++            break;
++        }
++        if (s.AddrReturn.Offset == 0)
++            break;
++        if (framesSkipped < framesToIgnore)
++            framesSkipped++;
++        else {
++            void * ra = (void *)s.AddrReturn.Offset;
++            if (hash)
++                *hash += (unsigned int)ra;
++            frames[count++ % maxFramesToCapture] = ra;
++        }
++    }
++
++    if (count > maxFramesToCapture) {
++        // If we exceeded the max size we need to shift the data
++        // back to the start position.
++        void * table_copy[CALLSTACK_MAX_FRAMES];
++        memcpy(table_copy, frames, sizeof(table_copy));
++        for (size_t i = 0; i < maxFramesToCapture; i++) {
++            frames[i] = table_copy[(count + i) % maxFramesToCapture];
++        }
++    }
++#endif
++    return count;
++}
++
++#endif // !defined(WINCE)
++
++#if defined(_M_IX86)
++#define SIZEOFPTR 4
++#define X86X64ARCHITECTURE IMAGE_FILE_MACHINE_I386
++#define AXREG Eax
++#define BPREG Ebp
++#define IPREG Eip
++#define SPREG Esp
++#elif defined(_M_X64)
++#define SIZEOFPTR 8
++#define X86X64ARCHITECTURE IMAGE_FILE_MACHINE_AMD64
++#define AXREG Rax
++#define BPREG Rbp
++#define IPREG Rip
++#define SPREG Rsp
++#endif // _M_IX86
++
++// Note: inline ASM not supported on x64 (_M_X64)
++#if defined(_M_IX86)
++#define FRAMEPOINTER(fp) __asm mov fp, BPREG // Copies the current frame pointer to the supplied variable.
++
++// This method is fast but it will not work if it encounters a module with frame pointer omission turned on
++static size_t FramePointerStackBackTrace(unsigned int framesToIgnore, unsigned int maxFramesToCapture, void * frames[], unsigned int * hash, char * incomplete, char omitFramesIfMaxExceeded)
++{
++    size_t count = 0;
++    SIZE_T *framepointer;
++    // Begin the stack trace with the current frame. Obtain the current
++    // frame pointer.
++    FRAMEPOINTER(framepointer);
++
++    *incomplete = 1;
++
++    if (hash)
++        *hash = 0;
++
++    DWORD framesSkipped = 0;
++    for (count = 0; omitFramesIfMaxExceeded || (count < maxFramesToCapture);) {
++        if ((SIZE_T*)*framepointer < framepointer) {
++            if ((SIZE_T*)*framepointer == NULL) {
++                // Looks like we reached the end of the stack.
++                *incomplete = 0;
++                break;
++            }
++            else {
++                // Invalid frame pointer. Frame pointer addresses should always
++                // increase as we move up the stack.
++                break;
++            }
++        }
++        if ((SIZE_T)*framepointer & (sizeof(SIZE_T*) - 1)) {
++            // Invalid frame pointer. Frame pointer addresses should always
++            // be aligned to the size of a pointer. This probably means that
++            // we've encountered a frame that was created by a module built with
++            // frame pointer omission (FPO) optimization turned on.
++            break;
++        }
++        if (IsBadReadPtr((SIZE_T*)*framepointer, sizeof(SIZE_T*))) {
++            // Bogus frame pointer. Again, this probably means that we've
++            // encountered a frame built with FPO optimization.
++            break;
++        }
++
++        if (framesSkipped < framesToIgnore) {
++            framesSkipped++;
++        }
++        else {
++            void * ra = (void*) *(framepointer + 1);
++            if (hash)
++                *hash += (unsigned int)ra;
++            frames[count++ % maxFramesToCapture] = ra;
++        }
++        framepointer = (SIZE_T*)*framepointer;
++    }
++
++    if (count > maxFramesToCapture) {
++        // If we exceeded the max size we need to shift the data
++        // back to the start position.
++        void * table_copy[CALLSTACK_MAX_FRAMES];
++        memcpy(table_copy, frames, sizeof(table_copy));
++        for (size_t i = 0; i < maxFramesToCapture; i++) {
++            frames[i] = table_copy[(count + i) % maxFramesToCapture];
++        }
++    }
++    return count;
++}
++#endif
++#endif
++
++//public static
++int GetCurrentCallstack(void * frames[], int max_frames, int framesToIgnore, unsigned int * hash)
++{
++    int count = 0;
++#ifdef WINCE
++    char incomplete = 1;
++
++#ifdef FRAMEPOINTER
++    bool overwriteFramesIfMaxExceeded = true;
++    // This method is fast -- but if frame pointer omission is enabled in a module it won't be able to walk the stack.
++    count = FramePointerStackBackTrace(framesToIgnore, max_frames, frames, hash, &incomplete, overwriteFramesIfMaxExceeded);
++    // Can only be true if overwriteFramesIfMaxExceeded is set
++    if (count > max_frames)
++        count = max_frames;
++#endif
++
++    if (incomplete)
++    {
++        HANDLE hThread = GetCurrentThread();
++        count = GetThreadCallStack(hThread, max_frames, frames, 0, framesToIgnore);
++        *hash = calculateHash(frames, count);
++    }
++
++#elif defined(_WIN32) // XP
++    if (!Init()) {
++        ExitProcess(1);
++        return 0;
++    }
++
++    char incomplete = 1;
++    char overwriteFramesIfMaxExceeded = 1;
++#if defined(_M_IX86)
++    // This method is fast -- but if frame pointer omission is enabled in a module it won't be able to walk the stack.
++    count = FramePointerStackBackTrace(framesToIgnore, max_frames, frames, hash, &incomplete, overwriteFramesIfMaxExceeded);
++    // Can only be true if overwriteFramesIfMaxExceeded is set
++    if (count > max_frames)
++        count = max_frames;
++#endif
++
++    // This method is fast and it can handle frame pointer omission, but it is limited at 62 frames.  webkit frequently
++    // exceeds that stack depth.
++    if (incomplete) {
++        //const size_t RtlMaxSupportedFrames = 62;
++        //size_t maxFrames = RtlMaxSupportedFrames - framesToIgnore;
++        count = RtlCaptureStackBackTrace(framesToIgnore, max_frames, frames, (PDWORD)hash);
++        if (count == max_frames)
++            incomplete = 1;
++    }
++
++    // StackWalk64 is blazingly slow but it can handle frame pointer omission and it doesn't have a max depth.  
++    // Hopefully we don't have to resort to it.
++    if (incomplete) {
++        CONTEXT c;
++        // The following is defined for x86 (XP and higher), x64 and IA64:
++        memset(&c, 0, sizeof(CONTEXT));
++        c.ContextFlags = CONTEXT_FULL;
++        RtlCaptureContext(&c);
++
++        HANDLE hThread = GetCurrentThread();
++        count = (int)GetCallstack(hThread, &c, framesToIgnore, max_frames, frames, hash, &incomplete, overwriteFramesIfMaxExceeded);
++
++        if (count > CALLSTACK_MAX_FRAMES)
++            count = CALLSTACK_MAX_FRAMES;
++    }
++#elif LINUX
++    #warning callstack support not implemented
++#endif
++    return count;
++}
++
++// public
++void CallstackDecode(CallstackOutputHandler output, void * data, void ** ra, int frameCount)
++{
++#if defined (_WIN32)
++    const int total_line_len = 1024;
++    char buffer[1024];
++#if defined (WINCE)
++    for (unsigned int i = 0; i < frameCount; i++)
++    {
++        int len = _snprintf_s(buffer, total_line_len, total_line_len, "    0x%p\n", ra[i]);
++        output(buffer, len, data);
++    }
++#else
++    const int max_name_len = 256;
++
++    static IMAGEHLP_SYMBOL64 * pSym = NULL;
++    if (pSym == NULL) {
++        pSym = (IMAGEHLP_SYMBOL64 *)malloc(sizeof(IMAGEHLP_SYMBOL64) + max_name_len);
++        memset(pSym, 0, sizeof(IMAGEHLP_SYMBOL64));
++        pSym->MaxNameLength = max_name_len;
++    }
++
++    DWORD displacement;
++    IMAGEHLP_LINE64 line;
++    memset(&line, 0, sizeof(line));
++    line.SizeOfStruct = sizeof(line);
++    IMAGEHLP_MODULE64 module;
++    memset(&module, 0, sizeof(module));
++    module.SizeOfStruct = sizeof(module);
++
++    for (unsigned int i = 0; i < frameCount; i++)
++    {
++        int len = 0;
++        char sym_name_undecorated[256] = { '\0' };
++        // show procedure info (SymGetSymFromAddr64())
++        if (pSymGetSymFromAddr64(hProcess, (DWORD64)ra[i], NULL, pSym) != FALSE)
++        {
++            pUnDecorateSymbolName(pSym->Name, sym_name_undecorated, max_name_len, UNDNAME_COMPLETE);
++
++            if (!pSymGetLineFromAddr64(hProcess, (DWORD64)ra[i], &displacement, &line) ||
++                !line.FileName || line.FileName[0] == 0) {
++                if (!pSymGetModuleInfo64(hProcess, (DWORD64)ra[i], &module)) {
++                    //_snprintf_s(buffer, total_line_len, "Error %d calling SymGetModuleInfo64 for address offset %p\n", GetLastError(), ra[i]);
++                    len = _snprintf_s(buffer, total_line_len, _TRUNCATE, "0x%p (File and line number not available): %s\n", ra[i], sym_name_undecorated);
++                }
++                else {
++                    //_snprintf_s(buffer, total_line_len, "%p (%s): %s: %s\n", 
++                    //    (LPVOID) ra[i], 
++                    //    module.ModuleName[0] == 0 ? "(module-name not available)" : module.ModuleName, 
++                    //    "(filename not available)", 
++                    //    sym_name_undecorated);
++                    len = _snprintf_s(buffer, total_line_len, _TRUNCATE, "0x%p (%s): %s\n", ra[i], module.ModuleName[0] == 0 ? "module name not available" : module.ModuleName, sym_name_undecorated);
++                }
++                //_snprintf_s(buffer, total_line_len, "Error %d calling SymGetLineFromAddr64 for address offset %p\n", GetLastError(), ra[i]);
++            }
++            else {
++                len = _snprintf_s(buffer, total_line_len, _TRUNCATE, "%s (%d): %s\n", line.FileName, line.LineNumber, sym_name_undecorated);
++            }
++        }
++        else {
++            if (!pSymGetModuleInfo64(hProcess, (DWORD64)ra[i], &module)) {
++                //_snprintf_s(buffer, total_line_len, "Error %d calling SymGetModuleInfo64 for address offset %p\n", GetLastError(), ra[i]);
++                len = _snprintf_s(buffer, total_line_len, _TRUNCATE, "0x%p (unknown module)\n", ra[i]);
++            }
++            else {
++                len = _snprintf_s(buffer, total_line_len, _TRUNCATE, "0x%p (%s)\n", ra[i], module.ModuleName[0] == 0 ? "module name not available" : module.ModuleName);
++            }
++            //_snprintf_s(buffer, total_line_len, "Error %d calling SymGetSymFromAddr64 for address offset %p\n", GetLastError(), ra[i]);
++            //output(buffer, data);
++        }
++        output(buffer, len, data);
++    }
++#endif
++#elif LINUX
++    // TODO: decode callstack
++#endif
++}
++
++#if defined (_WIN32) && defined(WINCE)
++static unsigned int calculateHash(void * frames[], unsigned int count)
++{
++    unsigned int retval = 0;
++    if (count > CALLSTACK_MAX_FRAMES) {
++        count = CALLSTACK_MAX_FRAMES;
++    }
++    for (unsigned int i = 0; i < count; i++) {
++        if (IS_VALID_NATIVE_RETURN_ADDR(frames[i])) {
++            retval += (unsigned int)frames[i];
++        }
++    }
++    return retval;
++}
++#endif
++
++
++void output_callstack(unsigned int framesToIgnore, CallstackOutputHandler output, void * context)
++{
++    unsigned int hashValue = 0;
++#if defined(_WIN32)
++    CallSnapshot snapshotFrames[CALLSTACK_MAX_FRAMES];
++#else
++    void * snapshotFrames[CALLSTACK_MAX_FRAMES];
++#endif
++    memset(snapshotFrames, 0, sizeof(snapshotFrames));
++    int count = GetCurrentCallstack((void **)snapshotFrames, CALLSTACK_MAX_FRAMES, framesToIgnore, &hashValue);
++
++    CallstackDecode(output, context, (void**)snapshotFrames, count);
++}
+diff --git a/gobject/Callstack.h b/gobject/Callstack.h
+new file mode 100644
+index 0000000..885d6d3
+--- /dev/null
++++ b/gobject/Callstack.h
+@@ -0,0 +1,21 @@
++/*
++ * (C) Copyright 2010 Hewlett-Packard Development Company, L.P.
++ * This program is free software; you can redistribute it and/or modify it under the
++ * terms of version 2.1 of the GNU Lesser General Public License as published by the
++ * Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
++ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with this program;
++ * if not, write to:
++ * Free Software Foundation, Inc.
++ * 51 Franklin Street, Fifth Floor
++ * Boston, MA 02110-1301, USA.
++ */
++
++#define CALLSTACK_MAX_FRAMES    120
++
++typedef void(*CallstackOutputHandler)(const char * text, int len, void * data);
++void output_callstack(unsigned int frames_to_ignore, CallstackOutputHandler, void * context);
+diff --git a/gobject/gobject.c b/gobject/gobject.c
+index d04f89c..bd23ed7 100644
+--- a/gobject/gobject.c
++++ b/gobject/gobject.c
+@@ -32,6 +32,7 @@
+ #include "gvaluetypes.h"
+ #include "gobject_trace.h"
+ #include "gconstructor.h"
++#include "Callstack.h"
+ 
+ /**
+  * SECTION:objects
+@@ -3034,6 +3035,28 @@ g_object_remove_toggle_ref (GObject       *object,
+     g_warning ("%s: couldn't find toggle ref %p(%p)", G_STRFUNC, notify, data);
+ }
+ 
++static gpointer watchedRef = 0;
++static g_object_watch_output watchCallback = 0;
++static void * watchRefContext = 0;
++static int refDerefCounter = 0;
++
++static void log_ref_deref(GObject * obj, const char * type, int old_val, int new_val)
++{
++    char buffer[256];
++    int len = g_snprintf(buffer, sizeof(buffer), "gobject.%s: %s: 0x%08x, %d => %d, total: %d\n", G_OBJECT_TYPE_NAME(obj), type, obj, old_val, new_val, refDerefCounter++);
++    watchCallback(buffer, len, watchRefContext);
++    unsigned int framesToIgnore = 2;
++    output_callstack(framesToIgnore, watchCallback, watchRefContext);
++}
++
++void g_object_watch_refunref(gpointer object, g_object_watch_output callback, void * context)
++{
++    refDerefCounter = 0;
++    watchedRef = object;
++    watchCallback = callback;
++    watchRefContext = context;
++}
++
+ /**
+  * g_object_ref:
+  * @object: (type GObject.Object): a #GObject
+@@ -3058,6 +3081,10 @@ g_object_ref (gpointer _object)
+ 
+   TRACE (GOBJECT_OBJECT_REF(object,G_TYPE_FROM_INSTANCE(object),old_val));
+ 
++  if (watchedRef == _object) {
++      log_ref_deref(object, "addref", old_val, old_val + 1);
++  }
++
+   return object;
+ }
+ 
+@@ -3095,6 +3122,10 @@ g_object_unref (gpointer _object)
+ 
+       TRACE (GOBJECT_OBJECT_UNREF(object,G_TYPE_FROM_INSTANCE(object),old_ref));
+ 
++      if (watchedRef == _object) {
++          log_ref_deref(object, "deref", old_ref, old_ref - 1);
++      }
++
+       /* if we went from 2->1 we need to notify toggle refs if any */
+       if (old_ref == 2 && has_toggle_ref) /* The last ref being held in this case is owned by the toggle_ref */
+ 	toggle_refs_notify (object, TRUE);
+@@ -3143,6 +3174,10 @@ g_object_unref (gpointer _object)
+           g_rw_lock_writer_unlock (&weak_locations_lock);
+         }
+ 
++      if (watchedRef == _object) {
++          log_ref_deref(object, "deref", 1, 0);
++      }
++
+       /* we are about to remove the last reference */
+       TRACE (GOBJECT_OBJECT_DISPOSE(object,G_TYPE_FROM_INSTANCE(object), 1));
+       G_OBJECT_GET_CLASS (object)->dispose (object);
+diff --git a/gobject/gobject.h b/gobject/gobject.h
+index 32ab997..dd6c1fc 100644
+--- a/gobject/gobject.h
++++ b/gobject/gobject.h
+@@ -478,6 +478,11 @@ GLIB_AVAILABLE_IN_ALL
+ gpointer    g_object_ref                      (gpointer        object);
+ GLIB_AVAILABLE_IN_ALL
+ void        g_object_unref                    (gpointer        object);
++
++typedef void(*g_object_watch_output)(const char * data, int bytes, void * context);
++GLIB_AVAILABLE_IN_ALL
++void        g_object_watch_refunref           (gpointer        object, g_object_watch_output, void * context);
++
+ GLIB_AVAILABLE_IN_ALL
+ void	    g_object_weak_ref		      (GObject	      *object,
+ 					       GWeakNotify     notify,
+diff --git a/win32/vs14/gobject.vcxproj b/win32/vs14/gobject.vcxproj
+index 5afc7a8..64e9392 100644
+--- a/win32/vs14/gobject.vcxproj
++++ b/win32/vs14/gobject.vcxproj
+@@ -169,6 +169,7 @@
+     </Link>
+   </ItemDefinitionGroup>
+   <ItemGroup>
++   <ClCompile Include="..\..\gobject\Callstack.c" />
+    <ClCompile Include="..\..\gobject\gatomicarray.c" />
+    <ClCompile Include="..\..\gobject\gbinding.c" />
+    <ClCompile Include="..\..\gobject\gboxed.c" />
+diff --git a/win32/vs14/gobject.vcxproj.filters b/win32/vs14/gobject.vcxproj.filters
+index 49052de..403d507 100644
+--- a/win32/vs14/gobject.vcxproj.filters
++++ b/win32/vs14/gobject.vcxproj.filters
+@@ -33,6 +33,7 @@
+    <ClCompile Include="..\..\gobject\gvaluearray.c"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\gobject\gvaluetransform.c"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="..\..\gobject\gvaluetypes.c"><Filter>Source Files</Filter></ClCompile>
++   <ClCompile Include="..\..\gobject\Callstack.c"><Filter>Source Files</Filter></ClCompile>
+   </ItemGroup>
+   <ItemGroup>
+     <ResourceCompile Include="..\..\gobject\gobject.rc"><Filter>Resource Files</Filter></ResourceCompile>
+-- 
+2.19.1.windows.1
+
