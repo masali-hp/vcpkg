@@ -1,0 +1,92 @@
+From 0d8414537c33e76e88c9210a422e9d77feac3d7d Mon Sep 17 00:00:00 2001
+From: Mark Salisbury <mark.salisbury@hp.com>
+Date: Thu, 11 Apr 2019 09:51:09 -0600
+Subject: [PATCH] Disable Aero Snap messages in order to improve debugger
+ performance
+
+GTK installs a low level keyboard hook in Windows; once the hook is
+installed debugger performance is ruined.  Any key press while the
+debugger is active is SUPER slow.
+---
+ gdk/win32/gdkevents-win32.c | 16 ++++++++++------
+ 1 file changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/gdk/win32/gdkevents-win32.c b/gdk/win32/gdkevents-win32.c
+index 9f77a28..d88534b 100644
+--- a/gdk/win32/gdkevents-win32.c
++++ b/gdk/win32/gdkevents-win32.c
+@@ -148,8 +148,10 @@ static int debug_indent = 0;
+ static int both_shift_pressed[2]; /* to store keycodes for shift keys */
+ 
+ /* low-level keyboard hook handle */
++/* this low level keyboard hook destroys debugger performance, so I'm commenting it out.
+ static HHOOK keyboard_hook = NULL;
+ static UINT aerosnap_message;
++*/
+ 
+ static void
+ track_mouse_event (DWORD dwFlags,
+@@ -299,6 +301,7 @@ _gdk_win32_window_procedure (HWND   hwnd,
+   return retval;
+ }
+ 
++/*
+ static LRESULT
+ low_level_keystroke_handler (WPARAM message,
+                                        KBDLLHOOKSTRUCT *kbdhook,
+@@ -309,7 +312,7 @@ low_level_keystroke_handler (WPARAM message,
+ 
+   if (message == WM_KEYDOWN &&
+       !GDK_WINDOW_DESTROYED (toplevel) &&
+-      _gdk_win32_window_lacks_wm_decorations (toplevel) && /* For CSD only */
++      _gdk_win32_window_lacks_wm_decorations (toplevel) && // For CSD only
+       last_keydown != kbdhook->vkCode &&
+       ((GetKeyState (VK_LWIN) & 0x8000) ||
+       (GetKeyState (VK_RWIN) & 0x8000)))
+@@ -339,12 +342,12 @@ low_level_keystroke_handler (WPARAM message,
+ 	  if (oneshiftdown && combo != GDK_WIN32_AEROSNAP_COMBO_NOTHING)
+ 	    combo += 4;
+ 
+-	  /* These are the only combos that Windows WM does handle for us */
++	  // These are the only combos that Windows WM does handle for us
+ 	  if (combo == GDK_WIN32_AEROSNAP_COMBO_SHIFTLEFT ||
+               combo == GDK_WIN32_AEROSNAP_COMBO_SHIFTRIGHT)
+             combo = GDK_WIN32_AEROSNAP_COMBO_NOTHING;
+ 
+-          /* On Windows 10 the WM will handle this specific combo */
++          // On Windows 10 the WM will handle this specific combo
+           if (combo == GDK_WIN32_AEROSNAP_COMBO_DOWN && maximized &&
+               g_win32_check_windows_version (6, 4, 0, G_WIN32_OS_ANY))
+             combo = GDK_WIN32_AEROSNAP_COMBO_NOTHING;
+@@ -416,6 +419,7 @@ set_up_low_level_keyboard_hook (void)
+ 
+   aerosnap_message = RegisterWindowMessage ("GDK_WIN32_AEROSNAP_MESSAGE");
+ }
++*/
+ 
+ void
+ _gdk_events_init (GdkDisplay *display)
+@@ -528,7 +532,7 @@ _gdk_events_init (GdkDisplay *display)
+   g_source_set_can_recurse (source, TRUE);
+   g_source_attach (source, NULL);
+ 
+-  set_up_low_level_keyboard_hook ();
++  /*set_up_low_level_keyboard_hook ();*/
+ }
+ 
+ gboolean
+@@ -2424,9 +2428,9 @@ gdk_event_translate (MSG  *msg,
+ 	}
+     }
+ 
+-  if (msg->message == aerosnap_message)
++  /*if (msg->message == aerosnap_message)
+     _gdk_win32_window_handle_aerosnap (gdk_window_get_toplevel (window),
+-                                       (GdkWin32AeroSnapCombo) msg->wParam);
++                                       (GdkWin32AeroSnapCombo) msg->wParam);*/
+ 
+   switch (msg->message)
+     {
+-- 
+2.19.1.windows.1
+
